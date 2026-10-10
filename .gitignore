@@ -1,0 +1,20 @@
+# Build / IDE
+.build/
+.pio/
+.vscode/
+.idea/
+*.elf
+*.bin
+*.hex
+*.map
+
+# Secrets / local config (keep example only)
+config.jsn
+**/config.jsn
+.env
+*.pem
+!example/
+
+# OS junk
+.DS_Store
+Thumbs.db
