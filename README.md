@@ -6,15 +6,16 @@ Reads local sensors, serves UDP clients, and uploads observations to Weather Und
 
 | Item | Value |
 |------|--------|
-| Firmware version | `1.1.0` |
+| Firmware version | `1.2.0` |
 | Target | SparkFun ESP32 MicroMod (`esp32micromod`) |
 | Config | SD card `/config.jsn` (see `example/config.jsn`) |
 | Hostname | `Weather Station 1` |
 
 ## Hardware
 
-- BME280 (I2C): humidity, pressure, internal temperature
+- BME280 (I2C): humidity, pressure (used for outdoor humidity / barometer; indoor temps not uploaded)
 - Dallas 1-Wire on `G0`: outdoor temperature (`tempf` for WU)
+- VEML6075 (I2C): UV index
 - Weather Meter Kit: wind speed/direction, rain (pins 35 / 14 / 27)
 - AS3935 lightning (SPI CS=`25`) — optional; station continues if absent
 - SD card: required for config
@@ -40,11 +41,18 @@ In `loop()`, if Wi-Fi/NTP is synced and `weather_underground.use` is true, `upda
 &humidity=...
 &baromin=...
 &tempf=...
+&dewptf=...
 &windspeedmph=...
 &winddir=...
 &windgustmph=...
+&windgustdir=...
+&windgustmph_10m=...
+&windgustdir_10m=...
+&windspdmph_avg2m=...
+&winddir_avg2m=...
 &dailyrainin=...
 &rainin=...
+&UV=...
 ```
 
 2. `updateWU()` sends:
@@ -69,13 +77,19 @@ Default host/endpoint (see example config):
 | `dateutc` | NTP UTC time, URL-encoded |
 | `humidity`, `baromin` | BME280 (pressure converted mb → inHg) |
 | `tempf` | Dallas outdoor sensor (°F) |
-| `windspeedmph`, `winddir` | Weather meter (kph → mph) |
-| `windgustmph` | Peak wind over last ~10 minutes (`GUSTINTERVAL`) |
+| `dewptf` | Computed from Dallas temp + BME humidity |
+| `windspeedmph`, `winddir` | Instantaneous weather meter (kph → mph) |
+| `windgustmph`, `windgustdir` | Peak over last ~10 minutes (`GUSTINTERVAL`) |
+| `windgustmph_10m`, `windgustdir_10m` | Same 10‑minute gust window |
+| `windspdmph_avg2m`, `winddir_avg2m` | ~2‑minute rolling average (vector mean for direction) |
 | `dailyrainin`, `rainin` | Daily / last-hour rain (mm → inches) |
+| `UV` | VEML6075 UV index (when sensor responds) |
 
 Notes:
 
-- BME280 outdoor `tempf` is **not** sent; outdoor temp comes from the Dallas probe.
+- Indoor fields (`indoortempf`, `indoorhumidity`) are **not** uploaded.
+- Soil moisture is not enabled: carrier soil power conflicts with Dallas on `G0`.
+- `solarradiation` / `leafwetness` need sensors this board does not have.
 - Serial logs redact `PASSWORD=…`.
 - Optional UDP clients with `reportWU` receive a copy of the request line after a successful connect.
 
@@ -113,7 +127,15 @@ Arduino IDE or PlatformIO with ESP32 MicroMod board support. Required libraries 
 
 Flash over the CP2102N USB-UART (`/dev/cu.usbserial-*` on macOS).
 
-## Changelog (1.1.0)
+## Changelog
+
+### 1.2.0
+
+- Upload additional WU fields: dewpoint, gust direction, 10‑minute gusts, 2‑minute wind averages, UV index
+- Enable VEML6075 when present
+- Still omit indoor temperature/humidity
+
+### 1.1.0
 
 - No longer hard-hangs on missing USB serial, SD, config, or Wi-Fi (retries instead)
 - AS3935 failure no longer marks the detector as OK

@@ -31,12 +31,14 @@
 #include <SPI.h>
 #include "SparkFunBME280.h"
 #include "SparkFun_AS3935.h"
+#include "SparkFun_VEML6075_Arduino_Library.h"
 #include "SparkFun_Weather_Meter_Kit_Arduino_Library.h"  //http://librarymanager/All#SparkFun_Weather_Meter_Kit
 #include <WiFiClientSecure.h>
 #include <TimeLib.h>
 #include <Wire.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include <math.h>
 
 
 const char* CACert = "-----BEGIN CERTIFICATE-----\n" \
@@ -111,6 +113,8 @@ char smalltemp1[128];
 #define GUSTINTERVAL 600
 long gusttimer;
 #define RAININTERVAL  60
+// ~2 minutes of samples at loop delay(~2s)
+#define WIND_AVG_SAMPLES 60
 float lasthourrain = 0;
 float raintoday = 0.0;
 time_t raintimer = 0;
@@ -120,17 +124,17 @@ int maxwinddir = 0;
 float currentwind = 0.0;
 float maxwind4wu = 0.0;
 int maxwinddir4wu = 0;
-
+float wind_speed_samples[WIND_AVG_SAMPLES];
+float wind_dir_samples[WIND_AVG_SAMPLES];
+int wind_sample_idx = 0;
+int wind_sample_count = 0;
 
 float rainarray[RAINARRAY_LENGTH];
 float *rainarrayhead = &rainarray[0];
 float *rainarrayend = &rainarray[RAINARRAY_LENGTH - 1];
 
-
-
-
 BME280 tempSensor;
-// VEML6075 uv;
+VEML6075 uv;
 SparkFun_AS3935 lightning;
 
 #define RRSIZE 4096
@@ -143,9 +147,9 @@ int windDirectionPin = 35;
 int windSpeedPin = 14;
 int rainfallPin = 27;
 
-// int soilPin = 34;  //A0 Pin number that measures analog moisture signal
-int WHITE_WIRE = G0;  //G0 Pin number that will power the soil moisture sensor
-// Setup a oneWire instance to communicate with any OneWire devices
+// Soil moisture uses A0 + a power GPIO on the carrier. G0 is used for the
+// Dallas outdoor temp probe, so soil moisture is not enabled in this build.
+int WHITE_WIRE = G0;  // Dallas OneWire (outdoor temperature)
 OneWire oneWire(WHITE_WIRE);
 
 // Pass our oneWire reference to Dallas Temperature sensor 
@@ -158,7 +162,7 @@ DeviceAddress tempDeviceAddress;
 // const int lightningInt = 17; // Interrupt pin for lightning detection
 int spiCS = 25; //G1SPI chip select pin
 
-// bool VEML_ok = false;
+bool VEML_ok = false;
 bool BME_ok = false;
 bool AS3935_ok = false;
 
@@ -236,11 +240,85 @@ void waitForUserInput()
     }
 }
 
+static void appendQueryFloat(char *param_str, const char *key, float value, int decimals) {
+  strcat(param_str, key);
+  dtostrf(value, 1, decimals, smalltemp0);
+  strcat(param_str, smalltemp0);
+}
+
+static void appendQueryInt(char *param_str, const char *key, int value) {
+  sprintf(working_char, "%s%d", key, value);
+  strcat(param_str, working_char);
+}
+
+// Magnus-Tetens dewpoint (°C) from temperature (°C) and relative humidity (%).
+static float dewpointC(float tempC, float humidityPct) {
+  if (humidityPct <= 0.0f) {
+    humidityPct = 0.01f;
+  }
+  if (humidityPct > 100.0f) {
+    humidityPct = 100.0f;
+  }
+  const float a = 17.27f;
+  const float b = 237.7f;
+  float gamma = (a * tempC) / (b + tempC) + logf(humidityPct / 100.0f);
+  return (b * gamma) / (a - gamma);
+}
+
+static float celsiusToFahrenheit(float tempC) {
+  return ((9.0f * tempC) / 5.0f) + 32.0f;
+}
+
+void recordWindSample(float speedKph, float dirDeg) {
+  wind_speed_samples[wind_sample_idx] = speedKph;
+  wind_dir_samples[wind_sample_idx] = dirDeg;
+  wind_sample_idx = (wind_sample_idx + 1) % WIND_AVG_SAMPLES;
+  if (wind_sample_count < WIND_AVG_SAMPLES) {
+    wind_sample_count++;
+  }
+}
+
+float avgWindSpeedKph() {
+  if (wind_sample_count == 0) {
+    return 0.0f;
+  }
+  float sum = 0.0f;
+  for (int i = 0; i < wind_sample_count; i++) {
+    sum += wind_speed_samples[i];
+  }
+  return sum / (float)wind_sample_count;
+}
+
+float avgWindDirDeg() {
+  if (wind_sample_count == 0) {
+    return 0.0f;
+  }
+  // Vector mean so 359° / 1° averages correctly near north.
+  double x = 0.0;
+  double y = 0.0;
+  for (int i = 0; i < wind_sample_count; i++) {
+    double r = radians(wind_dir_samples[i]);
+    x += cos(r);
+    y += sin(r);
+  }
+  float deg = (float)degrees(atan2(y, x));
+  if (deg < 0.0f) {
+    deg += 360.0f;
+  }
+  return deg;
+}
+
 char *create_url_str(char* param_str) {
+  float outdoorTempC = 0.0f;
+  float outdoorTempF = 0.0f;
+  float humidityPct = 0.0f;
+  bool haveOutdoorTemp = false;
+  bool haveHumidity = false;
 
   param_str[0] = 0;
   // Weather Underground PWS RapidFire / updateraw query string.
   // ID = station ID, PASSWORD = station key (not the website login password).
+  // Indoor fields (indoortempf / indoorhumidity) intentionally omitted.
   sprintf(param_str,
           "?action=updateraw&ID=%s&PASSWORD=%s&softwaretype=WeatherStation_ESP32&dateutc=",
           config.weather_underground.device_id,
@@ -251,37 +329,50 @@ char *create_url_str(char* param_str) {
   strftime(working_char, 128, "%Y-%m-%d+%H%%3A%M%%3A%S", t1);
   strcat(param_str, working_char);
 
-  if (BME_ok){
-    dtostrf(tempSensor.readFloatHumidity(), 1, 0, smalltemp0);
-    strcat(param_str,"&humidity=");
-    strcat(param_str, smalltemp0);
-
-    // dtostrf(tempSensor.readTempF(), 1, 1, smalltemp0);
-    // strcat(param_str, "&tempf=");
-    // strcat(param_str, smalltemp0);
-
-    strcat(param_str, "&baromin=");
-    dtostrf(mb2in(tempSensor.readFloatPressure()), 1, 3, smalltemp0);
-    strcat(param_str, smalltemp0);
+  if (BME_ok) {
+    humidityPct = tempSensor.readFloatHumidity();
+    haveHumidity = true;
+    appendQueryFloat(param_str, "&humidity=", humidityPct, 0);
+    appendQueryFloat(param_str, "&baromin=", mb2in(tempSensor.readFloatPressure()), 3);
   }
 
   dallas_temperature.requestTemperatures();
-  dtostrf(dallas_temperature.getTempF(tempDeviceAddress), 1,1 , smalltemp0);
-  strcat(param_str, "&tempf=");
-  strcat(param_str, smalltemp0);
+  outdoorTempF = dallas_temperature.getTempF(tempDeviceAddress);
+  outdoorTempC = dallas_temperature.getTempC(tempDeviceAddress);
+  // Dallas returns DEVICE_DISCONNECTED_* (~ -127 / -196.6) when missing.
+  if (outdoorTempC > -55.0f && outdoorTempC < 85.0f) {
+    haveOutdoorTemp = true;
+    appendQueryFloat(param_str, "&tempf=", outdoorTempF, 1);
+  }
 
-  sprintf(working_char,"&windspeedmph=%s",kmh2mph(smalltemp0, weatherMeterKit.getWindSpeed()));
-  strcat(param_str, working_char);
+  if (haveOutdoorTemp && haveHumidity) {
+    appendQueryFloat(param_str, "&dewptf=",
+                     celsiusToFahrenheit(dewpointC(outdoorTempC, humidityPct)), 1);
+  }
 
-  dtostrf(weatherMeterKit.getWindDirection(), 1, 0, smalltemp0);
-  strcat(param_str,"&winddir=");
-  strcat(param_str, smalltemp0);
+  float windSpeedKph = weatherMeterKit.getWindSpeed();
+  float windDirDeg = weatherMeterKit.getWindDirection();
+  appendQueryFloat(param_str, "&windspeedmph=", windSpeedKph / 1.609344f, 2);
+  appendQueryInt(param_str, "&winddir=", (int)lroundf(windDirDeg));
 
-  sprintf(smalltemp0,"&windgustmph=%s",kmh2mph(smalltemp1, maxwind4wu));
-  strcat(param_str, smalltemp0);
+  appendQueryFloat(param_str, "&windgustmph=", maxwind4wu / 1.609344f, 2);
+  appendQueryInt(param_str, "&windgustdir=", maxwinddir4wu);
+  // GUSTINTERVAL is 600s, so current gust window is the 10-minute window.
+  appendQueryFloat(param_str, "&windgustmph_10m=", maxwind4wu / 1.609344f, 2);
+  appendQueryInt(param_str, "&windgustdir_10m=", maxwinddir4wu);
+
+  if (wind_sample_count > 0) {
+    appendQueryFloat(param_str, "&windspdmph_avg2m=", avgWindSpeedKph() / 1.609344f, 2);
+    appendQueryInt(param_str, "&winddir_avg2m=", (int)lroundf(avgWindDirDeg()));
+  }
 
   strcat(param_str, dailyRain2in(smalltemp0));
   strcat(param_str, hourlyRain2in(smalltemp0));
+
+  if (VEML_ok) {
+    appendQueryFloat(param_str, "&UV=", uv.index(), 2);
+  }
+
   return param_str;
 }
 
@@ -624,6 +715,14 @@ void setup() {
   else Serial.println(F("OFF"));
   dallas_temperature.setResolution(tempDeviceAddress, 9);
 
+  if (uv.begin() == false) {
+    Serial.println(F("VEML6075 did not respond."));
+    VEML_ok = false;
+  } else {
+    Serial.println(F("VEML6075 UV sensor ready."));
+    VEML_ok = true;
+  }
+
   while (!initSensorsAndNetwork()) {
     Serial.println(F("setup: Retrying config/Wi-Fi in 15s..."));
     delay(15000);
@@ -636,11 +735,11 @@ void loop() {
   loop_epoch = ntp.epoch();
   loop_day = ntp.day();
   currentwind = weatherMeterKit.getWindSpeed();
+  float currentdir = weatherMeterKit.getWindDirection();
+  recordWindSample(currentwind, currentdir);
   if (currentwind > maxwind) {
     maxwind = currentwind;
-    maxwinddir = weatherMeterKit.getWindDirection();
-    // Serial.print("max wind speed now: ");
-    // Serial.println(maxwind)  // 
+    maxwinddir = (int)lroundf(currentdir);
   }
   if(rainperday_day != loop_day) {
     rainperday_day = loop_day;
