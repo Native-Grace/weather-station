@@ -9,11 +9,11 @@
 *.map
 
 # Secrets / local config (keep example only)
-config.jsn
-**/config.jsn
+/config.jsn
 .env
 *.pem
 !example/
+!example/config.jsn
 
 # OS junk
 .DS_Store

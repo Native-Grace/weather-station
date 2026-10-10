@@ -1,0 +1,34 @@
+{
+  "elevation": 50,
+  "latitude": -33.8688,
+  "longitude": 151.2093,
+  "wifi": {
+    "ssid": "YOUR_WIFI_SSID",
+    "password": "YOUR_WIFI_PASSWORD",
+    "usedhcp": true,
+    "ip": "",
+    "mask": "",
+    "gateway": "",
+    "dns1": "",
+    "dns2": ""
+  },
+  "udp": {
+    "use": true,
+    "port": 49999,
+    "update_frequency": 30,
+    "listeners": []
+  },
+  "weather_underground": {
+    "use": true,
+    "protocol": "https",
+    "host": "rtupdate.wunderground.com",
+    "endpoint": "/weatherstation/updateweatherstation.php",
+    "url": "https://rtupdate.wunderground.com/weatherstation/updateweatherstation.php",
+    "device_id": "YOUR_STATION_ID",
+    "device_key": "YOUR_STATION_KEY",
+    "user_id": "",
+    "password": "",
+    "api_key": "",
+    "upd8_frequency": 60
+  }
+}
