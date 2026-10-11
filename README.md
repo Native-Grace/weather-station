@@ -6,7 +6,7 @@ Reads local sensors, serves UDP clients, and uploads observations to Weather Und
 
 | Item | Value |
 |------|--------|
-| Firmware version | `1.2.0` |
+| Firmware version | `1.3.0` |
 | Target | SparkFun ESP32 MicroMod (`esp32micromod`) |
 | Config | SD card `/config.jsn` (see `example/config.jsn`) |
 | Hostname | `Weather Station 1` |
@@ -14,7 +14,7 @@ Reads local sensors, serves UDP clients, and uploads observations to Weather Und
 ## Hardware
 
 - BME280 (I2C): humidity, pressure (used for outdoor humidity / barometer; indoor temps not uploaded)
-- Dallas 1-Wire on `G0`: outdoor temperature (`tempf` for WU)
+- Dallas 1-Wire on `G0`: up to 2× DS18B20 (`tempf` / `temp2f` for WU; ROM-sorted)
 - VEML6075 (I2C): UV index
 - Weather Meter Kit: wind speed/direction, rain (pins 35 / 14 / 27)
 - AS3935 lightning (SPI CS=`25`) — optional; station continues if absent
@@ -76,8 +76,9 @@ Default host/endpoint (see example config):
 | `ID` / `PASSWORD` | Station ID and **station key** from config (`device_id` / `device_key`) |
 | `dateutc` | NTP UTC time, URL-encoded |
 | `humidity`, `baromin` | BME280 (pressure converted mb → inHg) |
-| `tempf` | Dallas outdoor sensor (°F) |
-| `dewptf` | Computed from Dallas temp + BME humidity |
+| `tempf` | Dallas sensor 0 (°F, lowest ROM address) |
+| `temp2f` | Dallas sensor 1 (°F, if present) |
+| `dewptf` | Computed from Dallas `tempf` + BME humidity |
 | `windspeedmph`, `winddir` | Instantaneous weather meter (kph → mph) |
 | `windgustmph`, `windgustdir` | Peak over last ~10 minutes (`GUSTINTERVAL`) |
 | `windgustmph_10m`, `windgustdir_10m` | Same 10‑minute gust window |
@@ -128,6 +129,11 @@ Arduino IDE or PlatformIO with ESP32 MicroMod board support. Required libraries 
 Flash over the CP2102N USB-UART (`/dev/cu.usbserial-*` on macOS).
 
 ## Changelog
+
+### 1.3.0
+
+- Support two DS18B20 sensors on the G0 1-Wire bus (`tempf` + `temp2f`)
+- Stable sensor index by sorted ROM address
 
 ### 1.2.0
 

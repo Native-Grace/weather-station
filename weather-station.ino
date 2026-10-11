@@ -39,6 +39,8 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <math.h>
+#include <stdlib.h>
+#include <string.h>
 
 
 const char* CACert = "-----BEGIN CERTIFICATE-----\n" \
@@ -149,15 +151,11 @@ int rainfallPin = 27;
 
 // Soil moisture uses A0 + a power GPIO on the carrier. G0 is used for the
 // Dallas outdoor temp probe, so soil moisture is not enabled in this build.
-int WHITE_WIRE = G0;  // Dallas OneWire (outdoor temperature)
+int WHITE_WIRE = G0;  // Dallas OneWire bus (supports multiple DS18B20s)
 OneWire oneWire(WHITE_WIRE);
-
-// Pass our oneWire reference to Dallas Temperature sensor 
 DallasTemperature dallas_temperature(&oneWire);
-DeviceAddress tempDeviceAddress; 
-
-
-
+DeviceAddress dallasAddresses[MAX_DALLAS_SENSORS];
+uint8_t dallasCount = 0;
 
 // const int lightningInt = 17; // Interrupt pin for lightning detection
 int spiCS = 25; //G1SPI chip select pin
@@ -308,6 +306,68 @@ float avgWindDirDeg() {
   return deg;
 }
 
+static void printDallasAddress(const DeviceAddress addr) {
+  for (uint8_t i = 0; i < 8; i++) {
+    if (addr[i] < 16) {
+      Serial.print('0');
+    }
+    Serial.print(addr[i], HEX);
+    if (i < 7) {
+      Serial.print(':');
+    }
+  }
+}
+
+static int compareDallasAddress(const void *a, const void *b) {
+  return memcmp(a, b, 8);
+}
+
+static bool dallasTempValidC(float tempC) {
+  return tempC > -55.0f && tempC < 85.0f;
+}
+
+static void initDallasSensors() {
+  dallas_temperature.begin();
+  uint8_t found = dallas_temperature.getDeviceCount();
+  dallasCount = 0;
+
+  Serial.print(F("Found "));
+  Serial.print(found, DEC);
+  Serial.println(F(" Dallas devices."));
+
+  for (uint8_t i = 0; i < found && dallasCount < MAX_DALLAS_SENSORS; i++) {
+    if (dallas_temperature.getAddress(dallasAddresses[dallasCount], i)) {
+      dallasCount++;
+    }
+  }
+
+  // Stable index assignment across reboots (ROM address order).
+  if (dallasCount > 1) {
+    qsort(dallasAddresses, dallasCount, sizeof(DeviceAddress), compareDallasAddress);
+  }
+
+  for (uint8_t i = 0; i < dallasCount; i++) {
+    dallas_temperature.setResolution(dallasAddresses[i], 12);
+    Serial.print(F("  Dallas["));
+    Serial.print(i);
+    Serial.print(F("] "));
+    printDallasAddress(dallasAddresses[i]);
+    if (i == 0) {
+      Serial.print(F(" -> tempf"));
+    } else if (i == 1) {
+      Serial.print(F(" -> temp2f"));
+    }
+    Serial.println();
+  }
+
+  Serial.print(F("Parasite power is: "));
+  if (dallas_temperature.isParasitePowerMode()) {
+    Serial.println(F("ON"));
+  } else {
+    Serial.println(F("OFF"));
+  }
+}
+
 char *create_url_str(char* param_str) {
   float outdoorTempC = 0.0f;
   float outdoorTempF = 0.0f;
@@ -319,6 +379,7 @@ char *create_url_str(char* param_str) {
   // Weather Underground PWS RapidFire / updateraw query string.
   // ID = station ID, PASSWORD = station key (not the website login password).
   // Indoor fields (indoortempf / indoorhumidity) intentionally omitted.
+  // Dallas[0] -> tempf, Dallas[1] -> temp2f (ROM-sorted).
   sprintf(param_str,
           "?action=updateraw&ID=%s&PASSWORD=%s&softwaretype=WeatherStation_ESP32&dateutc=",
           config.weather_underground.device_id,
@@ -336,13 +397,39 @@ char *create_url_str(char* param_str) {
     appendQueryFloat(param_str, "&baromin=", mb2in(tempSensor.readFloatPressure()), 3);
   }
 
-  dallas_temperature.requestTemperatures();
-  outdoorTempF = dallas_temperature.getTempF(tempDeviceAddress);
-  outdoorTempC = dallas_temperature.getTempC(tempDeviceAddress);
-  // Dallas returns DEVICE_DISCONNECTED_* (~ -127 / -196.6) when missing.
-  if (outdoorTempC > -55.0f && outdoorTempC < 85.0f) {
-    haveOutdoorTemp = true;
-    appendQueryFloat(param_str, "&tempf=", outdoorTempF, 1);
+  if (dallasCount > 0) {
+    dallas_temperature.requestTemperatures();
+  }
+
+  for (uint8_t i = 0; i < dallasCount; i++) {
+    float tempC = dallas_temperature.getTempC(dallasAddresses[i]);
+    float tempF = dallas_temperature.getTempF(dallasAddresses[i]);
+    if (!dallasTempValidC(tempC)) {
+      continue;
+    }
+    if (i == 0) {
+      outdoorTempC = tempC;
+      outdoorTempF = tempF;
+      haveOutdoorTemp = true;
+      appendQueryFloat(param_str, "&tempf=", tempF, 1);
+    } else if (i == 1) {
+      appendQueryFloat(param_str, "&temp2f=", tempF, 1);
+    }
+    Serial.print(F("Dallas["));
+    Serial.print(i);
+    Serial.print(F("]: "));
+    Serial.print(tempC, 2);
+    Serial.print(F(" C / "));
+    Serial.print(tempF, 2);
+    Serial.println(F(" F"));
+  }
+
+  if (BME_ok) {
+    Serial.print(F("BME280: "));
+    Serial.print(tempSensor.readTempC(), 2);
+    Serial.print(F(" C / "));
+    Serial.print(tempSensor.readTempF(), 2);
+    Serial.println(F(" F"));
   }
 
   if (haveOutdoorTemp && haveHumidity) {
@@ -403,10 +490,22 @@ char *createUDPData(char* datastr, UNITS2REPORT *units) {
     }
   }
   if(units->temperatureX){
-    dallas_temperature.requestTemperatures();
-    dtostrf(dallas_temperature.getTempC(tempDeviceAddress), 1,1 , smalltemp1);
-    sprintf(working_char,"\"external_temperature\":%s%s", smalltemp1,units->commaAfter_temperatureX() ? "," : "");
-    strcat(datastr, working_char);
+    if (dallasCount > 0) {
+      dallas_temperature.requestTemperatures();
+    }
+    if (dallasCount > 0 && dallasTempValidC(dallas_temperature.getTempC(dallasAddresses[0]))) {
+      dtostrf(dallas_temperature.getTempC(dallasAddresses[0]), 1, 1, smalltemp1);
+      sprintf(working_char, "\"external_temperature\":%s", smalltemp1);
+      strcat(datastr, working_char);
+      if (dallasCount > 1 && dallasTempValidC(dallas_temperature.getTempC(dallasAddresses[1]))) {
+        dtostrf(dallas_temperature.getTempC(dallasAddresses[1]), 1, 1, smalltemp1);
+        sprintf(working_char, ",\"external_temperature2\":%s", smalltemp1);
+        strcat(datastr, working_char);
+      }
+      if (units->commaAfter_temperatureX()) {
+        strcat(datastr, ",");
+      }
+    }
   }
   if(units->speed){
     dtostrf(weatherMeterKit.getWindSpeed(),1,2,smalltemp1);
@@ -501,17 +600,34 @@ char *createUDPData_tabbed(char* datastr, UNITS2REPORT *units) {
     }
   }
   if(units->temperatureX){
-    dallas_temperature.requestTemperatures();
-    dtostrf(dallas_temperature.getTempC(tempDeviceAddress), 1,1 , smalltemp1);
-    sprintf(working_char,"External Temperature: %s", smalltemp1);
-    Serial.println(working_char);
-    strcat(datastr,working_char);
-    if(fields_printed >= 2) {
-      fields_printed = 0;
-      strcat(datastr,"\n");
-    } else {
-      strcat(datastr,"\t");
-      fields_printed++;
+    if (dallasCount > 0) {
+      dallas_temperature.requestTemperatures();
+    }
+    if (dallasCount > 0 && dallasTempValidC(dallas_temperature.getTempC(dallasAddresses[0]))) {
+      dtostrf(dallas_temperature.getTempC(dallasAddresses[0]), 1, 1, smalltemp1);
+      sprintf(working_char, "External Temperature: %s", smalltemp1);
+      Serial.println(working_char);
+      strcat(datastr, working_char);
+      if (fields_printed >= 2) {
+        fields_printed = 0;
+        strcat(datastr, "\n");
+      } else {
+        strcat(datastr, "\t");
+        fields_printed++;
+      }
+    }
+    if (dallasCount > 1 && dallasTempValidC(dallas_temperature.getTempC(dallasAddresses[1]))) {
+      dtostrf(dallas_temperature.getTempC(dallasAddresses[1]), 1, 1, smalltemp1);
+      sprintf(working_char, "External Temperature 2: %s", smalltemp1);
+      Serial.println(working_char);
+      strcat(datastr, working_char);
+      if (fields_printed >= 2) {
+        fields_printed = 0;
+        strcat(datastr, "\n");
+      } else {
+        strcat(datastr, "\t");
+        fields_printed++;
+      }
     }
   }
 
@@ -704,16 +820,7 @@ void setup() {
   }
 
   Wire.begin();
-  dallas_temperature.begin();
-  dallas_temperature.getAddress(tempDeviceAddress, 0);
-  Serial.print(F("Found "));
-  Serial.print(dallas_temperature.getDeviceCount(), DEC);
-  Serial.println(F(" Dallas devices."));
-
-  Serial.print(F("Parasite power is: "));
-  if (dallas_temperature.isParasitePowerMode()) Serial.println(F("ON"));
-  else Serial.println(F("OFF"));
-  dallas_temperature.setResolution(tempDeviceAddress, 9);
+  initDallasSensors();
 
   if (uv.begin() == false) {
     Serial.println(F("VEML6075 did not respond."));

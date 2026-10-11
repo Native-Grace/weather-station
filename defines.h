@@ -1,7 +1,9 @@
 #ifndef DEFINES_H
 #define DEFINES_H
 
-#define FIRMWARE_VERSION "1.2.0"
+#define FIRMWARE_VERSION "1.3.0"
+
+#define MAX_DALLAS_SENSORS 2
 
 #define DEBUG false
 

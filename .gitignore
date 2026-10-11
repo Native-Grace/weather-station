@@ -18,3 +18,7 @@
 # OS junk
 .DS_Store
 Thumbs.db
+
+# macOS duplicate artifacts
+*.ino 2.cpp
+* 2.cpp
