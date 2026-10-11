@@ -379,7 +379,8 @@ char *create_url_str(char* param_str) {
   // Weather Underground PWS RapidFire / updateraw query string.
   // ID = station ID, PASSWORD = station key (not the website login password).
   // Indoor fields (indoortempf / indoorhumidity) intentionally omitted.
-  // Dallas[0] -> tempf, Dallas[1] -> temp2f (ROM-sorted).
+  // Dallas[0] -> tempf (outdoor). Onboard BME280 -> temp2f.
+  // Optional Dallas[1] is logged/UDP only (not uploaded as temp2f).
   sprintf(param_str,
           "?action=updateraw&ID=%s&PASSWORD=%s&softwaretype=WeatherStation_ESP32&dateutc=",
           config.weather_underground.device_id,
@@ -412,8 +413,6 @@ char *create_url_str(char* param_str) {
       outdoorTempF = tempF;
       haveOutdoorTemp = true;
       appendQueryFloat(param_str, "&tempf=", tempF, 1);
-    } else if (i == 1) {
-      appendQueryFloat(param_str, "&temp2f=", tempF, 1);
     }
     Serial.print(F("Dallas["));
     Serial.print(i);
@@ -425,10 +424,13 @@ char *create_url_str(char* param_str) {
   }
 
   if (BME_ok) {
-    Serial.print(F("BME280: "));
-    Serial.print(tempSensor.readTempC(), 2);
+    float bmeC = tempSensor.readTempC();
+    float bmeF = tempSensor.readTempF();
+    appendQueryFloat(param_str, "&temp2f=", bmeF, 1);
+    Serial.print(F("BME280 (temp2f): "));
+    Serial.print(bmeC, 2);
     Serial.print(F(" C / "));
-    Serial.print(tempSensor.readTempF(), 2);
+    Serial.print(bmeF, 2);
     Serial.println(F(" F"));
   }
 

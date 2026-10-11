@@ -6,7 +6,7 @@ Reads local sensors, serves UDP clients, and uploads observations to Weather Und
 
 | Item | Value |
 |------|--------|
-| Firmware version | `1.3.0` |
+| Firmware version | `1.3.1` |
 | Target | SparkFun ESP32 MicroMod (`esp32micromod`) |
 | Config | SD card `/config.jsn` (see `example/config.jsn`) |
 | Hostname | `Weather Station 1` |
@@ -76,8 +76,8 @@ Default host/endpoint (see example config):
 | `ID` / `PASSWORD` | Station ID and **station key** from config (`device_id` / `device_key`) |
 | `dateutc` | NTP UTC time, URL-encoded |
 | `humidity`, `baromin` | BME280 (pressure converted mb → inHg) |
-| `tempf` | Dallas sensor 0 (°F, lowest ROM address) |
-| `temp2f` | Dallas sensor 1 (°F, if present) |
+| `tempf` | Dallas sensor 0 (°F, outdoor / lowest ROM address) |
+| `temp2f` | Onboard BME280 temperature (°F) |
 | `dewptf` | Computed from Dallas `tempf` + BME humidity |
 | `windspeedmph`, `winddir` | Instantaneous weather meter (kph → mph) |
 | `windgustmph`, `windgustdir` | Peak over last ~10 minutes (`GUSTINTERVAL`) |
@@ -130,9 +130,14 @@ Flash over the CP2102N USB-UART (`/dev/cu.usbserial-*` on macOS).
 
 ## Changelog
 
+### 1.3.1
+
+- Upload onboard BME280 temperature as Weather Underground `temp2f`
+- Dallas remains `tempf` (outdoor)
+
 ### 1.3.0
 
-- Support two DS18B20 sensors on the G0 1-Wire bus (`tempf` + `temp2f`)
+- Support two DS18B20 sensors on the G0 1-Wire bus
 - Stable sensor index by sorted ROM address
 
 ### 1.2.0
