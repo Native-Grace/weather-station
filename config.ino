@@ -152,6 +152,43 @@ bool loadConfiguration(const char* filename, Config *config, bool validate_use) 
   } else {
     config->udp.update_frequency = 10;
   }
+
+  // MQTT (Home Assistant)
+  config->mqtt.use = false;
+  config->mqtt.host[0] = 0;
+  config->mqtt.port = 1883;
+  config->mqtt.user[0] = 0;
+  config->mqtt.password[0] = 0;
+  strncpy(config->mqtt.base_topic, "weatherstation", sizeof(config->mqtt.base_topic));
+  strncpy(config->mqtt.discovery_prefix, "homeassistant",
+          sizeof(config->mqtt.discovery_prefix));
+  config->mqtt.upd8_frequency = 30;
+  if (doc["mqtt"].is<JsonObject>()) {
+    config->mqtt.use = doc["mqtt"]["use"] | false;
+    strncpy(config->mqtt.host, doc["mqtt"]["host"] | "", sizeof(config->mqtt.host));
+    if (doc["mqtt"]["port"].is<signed int>()) {
+      config->mqtt.port = doc["mqtt"]["port"].as<signed int>();
+    }
+    strncpy(config->mqtt.user, doc["mqtt"]["user"] | "", sizeof(config->mqtt.user));
+    strncpy(config->mqtt.password, doc["mqtt"]["password"] | "",
+            sizeof(config->mqtt.password));
+    if (doc["mqtt"]["base_topic"].is<const char *>()) {
+      strncpy(config->mqtt.base_topic, doc["mqtt"]["base_topic"] | "weatherstation",
+              sizeof(config->mqtt.base_topic));
+    }
+    if (doc["mqtt"]["discovery_prefix"].is<const char *>()) {
+      strncpy(config->mqtt.discovery_prefix,
+              doc["mqtt"]["discovery_prefix"] | "homeassistant",
+              sizeof(config->mqtt.discovery_prefix));
+    }
+    if (doc["mqtt"]["upd8_frequency"].is<signed int>()) {
+      config->mqtt.upd8_frequency = doc["mqtt"]["upd8_frequency"].as<signed int>();
+    }
+    if (config->mqtt.use && !config->mqtt.host[0]) {
+      config->mqtt.use = false;
+      Serial.println(F("checkConfig: MQTT host empty"));
+    }
+  }
   unsigned long p = doc["udp"]["port"].as<unsigned long>();
   if (p >= MIN_UDP_PORT && p <= MAX_UDP_PORT) {
     config->udp.port = (port_t) p;
@@ -347,6 +384,41 @@ bool editWU(Config *config, JsonDocument doc) {
     Serial.println(F("editWU: Missing action field in Weather Underground update"));
   }
   return false;
+}
+
+bool editMQTT(Config *config, JsonDocument doc) {
+  // {"parameter":"mqtt","host":"192.168.2.10","port":1883,"use":true,...}
+  if (!doc["host"].is<std::string>() || strlen(doc["host"] | "") == 0) {
+    Serial.println(F("editMQTT: Missing host in MQTT update"));
+    return false;
+  }
+  strncpy(config->mqtt.host, doc["host"] | "", sizeof(config->mqtt.host));
+  if (doc["port"].is<signed int>()) {
+    config->mqtt.port = doc["port"].as<signed int>();
+  }
+  if (doc["use"].is<bool>()) {
+    config->mqtt.use = doc["use"].as<bool>();
+  } else {
+    config->mqtt.use = true;
+  }
+  if (doc["user"].is<std::string>()) {
+    strncpy(config->mqtt.user, doc["user"] | "", sizeof(config->mqtt.user));
+  }
+  if (doc["password"].is<std::string>()) {
+    strncpy(config->mqtt.password, doc["password"] | "", sizeof(config->mqtt.password));
+  }
+  if (doc["base_topic"].is<std::string>()) {
+    strncpy(config->mqtt.base_topic, doc["base_topic"] | "weatherstation",
+            sizeof(config->mqtt.base_topic));
+  }
+  if (doc["discovery_prefix"].is<std::string>()) {
+    strncpy(config->mqtt.discovery_prefix, doc["discovery_prefix"] | "homeassistant",
+            sizeof(config->mqtt.discovery_prefix));
+  }
+  if (doc["upd8_frequency"].is<signed int>()) {
+    config->mqtt.upd8_frequency = doc["upd8_frequency"].as<signed int>();
+  }
+  return true;
 }
 
 bool editListener(Config *oldconfig, JsonDocument doc) {
@@ -580,6 +652,16 @@ void writeConfig(const char *filename, Config *config, bool toSerial = false) {
 
 
 
+  JsonObject mqtt = doc["mqtt"].to<JsonObject>();
+  mqtt["use"] = config->mqtt.use;
+  mqtt["host"] = config->mqtt.host;
+  mqtt["port"] = config->mqtt.port;
+  mqtt["user"] = config->mqtt.user;
+  mqtt["password"] = config->mqtt.password;
+  mqtt["base_topic"] = config->mqtt.base_topic;
+  mqtt["discovery_prefix"] = config->mqtt.discovery_prefix;
+  mqtt["upd8_frequency"] = config->mqtt.upd8_frequency;
+
   // Serial.println(F("writeConfig: About to setup wifi."));
   JsonObject wifi = doc["wifi"].to<JsonObject>();
   wifi["ssid"] = config->wifi.ssid;
@@ -763,13 +845,20 @@ bool editConfiguration(const char* filename, JsonDocument doc, bool *restartWiFi
     }  else {
       Serial.println(F("editConfiguration: Edit UDP Failed"));
     } 
+  }  else if(strcmp(parameter, "mqtt") == 0) {
+    if (editMQTT(&oldconfig, doc)) {
+      writeConfig(filename, &oldconfig);
+      return true;
+    }  else {
+      Serial.println(F("editConfiguration: Edit MQTT Failed"));
+    }
   }  else if(strcmp(parameter, "listener") == 0) {
     if (editListener(&oldconfig, doc)) {
       writeConfig(filename, &oldconfig);
       return true;
     }  else {
       Serial.println(F("editConfiguration: Edit UDP Failed"));
-    } 
+    }
   }  else {
     Serial.print("editConfiguration: Unknown Parameter to Edit: ");
     Serial.println(parameter);
@@ -862,6 +951,28 @@ void getConfigPart(const char* filename, JsonDocument docin, char* buffer, unsig
     templen = strlen(temp);
     temp[templen] = '\n';
     temp[min(templen+1, 4095)] = 0;
+    if (strlen(temp) < sizeofbuffer) {
+      *success = true;
+      strncpy(buffer,temp, sizeofbuffer);
+      free(temp);
+      return;
+    }
+    *success = false;
+    free(temp);
+    return;
+  } else if (strcmp(part, "mqtt") == 0) {
+    if(!doc["mqtt"].is<JsonObject>()) {
+      Serial.println(F("getConfigPart: mqtt element missing or of wrong type"));
+      *success = false;
+      free(temp);
+      return;
+    }
+    doc["mqtt"]["password"] = "****************";
+    JsonObject mqtt = doc["mqtt"].as<JsonObject>();
+    serializeJson(mqtt, temp, 4096);
+    templen = strlen(temp);
+    temp[templen] = '\n';
+    temp[min(templen+1,4095)] = 0;
     if (strlen(temp) < sizeofbuffer) {
       *success = true;
       strncpy(buffer,temp, sizeofbuffer);

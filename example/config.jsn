@@ -30,5 +30,15 @@
     "password": "",
     "api_key": "",
     "upd8_frequency": 60
+  },
+  "mqtt": {
+    "use": true,
+    "host": "192.168.2.10",
+    "port": 1883,
+    "user": "",
+    "password": "",
+    "base_topic": "weatherstation",
+    "discovery_prefix": "homeassistant",
+    "upd8_frequency": 30
   }
 }

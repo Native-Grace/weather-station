@@ -28,6 +28,7 @@
 #include "config.h"
 #include "networks_funcs.h"
 #include "Readings.h"
+#include "mqtt_funcs.h"
 #include <SPI.h>
 #include "SparkFunBME280.h"
 #include "SparkFun_AS3935.h"
@@ -791,6 +792,7 @@ static bool initSensorsAndNetwork() {
   lastUDPupd8 = lastWUupd8;
 
   httpsclient.setCACert(CACert);
+  mqttSetup(&config);
   Serial.println(F("Setup Complete"));
   return true;
 }
@@ -900,6 +902,9 @@ void loop() {
       }
     }
   }
+
+  mqttLoop();
+
   // digitalWrite(LED_BUILTIN, LED_ON ? LOW : HIGH);
   // LED_ON = !LED_ON;
 
@@ -1177,6 +1182,7 @@ void reportWUtoUDP(UDP_CLIENTS_TYPE * clients, char *msg, WiFiUDP *udp) {
 
 void reloadConfig(const char* filename, Config* config, bool reloadConfig_flag) {
   if(loadConfiguration(filename, config, true)) {
+    mqttSetup(config);
     // clone current client list
     UDP_CLIENTS_TYPE current_udp_clients[MAX_CLIENTS];
     memcpy((void *)&current_udp_clients, (void *)udp_clients, sizeof(udp_clients));

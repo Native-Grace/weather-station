@@ -50,12 +50,23 @@ struct UDP_CONFIG {
   LISTENER listeners[MAX_CLIENTS];
 };
 
+typedef struct {
+  bool use = false;
+  char host[64] = "";
+  int port = 1883;
+  char user[64] = "";
+  char password[64] = "";
+  char base_topic[64] = "weatherstation";
+  char discovery_prefix[64] = "homeassistant";
+  int upd8_frequency = 30;
+} MQTT_CONFIG;
 
 typedef struct {
   int noOfssids;
   WIFI_STRUCT wifi;
   WUNDERGRPOND weather_underground;
   UDP_CONFIG udp;
+  MQTT_CONFIG mqtt;
   int elevation;
   float latitude;
   float longitude;

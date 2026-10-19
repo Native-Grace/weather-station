@@ -6,7 +6,7 @@ Reads local sensors, serves UDP clients, and uploads observations to Weather Und
 
 | Item | Value |
 |------|--------|
-| Firmware version | `1.3.1` |
+| Firmware version | `1.4.0` |
 | Target | SparkFun ESP32 MicroMod (`esp32micromod`) |
 | Config | SD card `/config.jsn` (see `example/config.jsn`) |
 | Hostname | `Weather Station 1` |
@@ -76,8 +76,8 @@ Default host/endpoint (see example config):
 | `ID` / `PASSWORD` | Station ID and **station key** from config (`device_id` / `device_key`) |
 | `dateutc` | NTP UTC time, URL-encoded |
 | `humidity`, `baromin` | BME280 (pressure converted mb → inHg) |
-| `tempf` | Dallas sensor 0 (°F, outdoor / lowest ROM address) |
-| `temp2f` | Onboard BME280 temperature (°F) |
+| `tempf` | Dallas sensor 0 (°F, lowest ROM address) |
+| `temp2f` | Dallas sensor 1 (°F, if present) |
 | `dewptf` | Computed from Dallas `tempf` + BME humidity |
 | `windspeedmph`, `winddir` | Instantaneous weather meter (kph → mph) |
 | `windgustmph`, `windgustdir` | Peak over last ~10 minutes (`GUSTINTERVAL`) |
@@ -130,10 +130,18 @@ Flash over the CP2102N USB-UART (`/dev/cu.usbserial-*` on macOS).
 
 ## Changelog
 
+### 1.4.0
+
+- MQTT + Home Assistant discovery (both Dallas temps, humidity, wind, rain, board temp)
+- See `docs/homeassistant.md`
+
+### 1.3.2
+
+- Weather Underground `temp2f` comes from Dallas sensor 1 again (not BME280)
+
 ### 1.3.1
 
-- Upload onboard BME280 temperature as Weather Underground `temp2f`
-- Dallas remains `tempf` (outdoor)
+- Briefly used onboard BME280 as `temp2f` when only one Dallas was present
 
 ### 1.3.0
 

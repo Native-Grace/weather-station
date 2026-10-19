@@ -15,6 +15,7 @@ void writeConfig(const char *, Config*, bool);
 bool editudp(Config*, JsonDocument);
 bool editssid(Config*, JsonDocument,  bool*);
 bool editWU(Config*, JsonDocument);
+bool editMQTT(Config*, JsonDocument);
 bool editListener(Config*, JsonDocument);
 bool readFile2buffer(const char *filename, char *buffer, int buffer_length);
 bool loadConfiguration(const char*, Config*, bool);
